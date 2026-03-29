@@ -1,68 +1,95 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import api from '@/lib/api';
-import { Wallet, Transaction, TransactionPagination } from '@/types/wallet.types';
-import { ApiResponse } from '@/types/user.types';
+import { useWalletStore } from '@/store/walletStore';
 
-/**
- * Custom hook for all wallet data and operations.
- * Centralizes wallet state so any component can use it without prop drilling.
- */
+interface WalletResponse {
+  balance: number;
+  currency: string;
+}
+
+interface TransactionResponse {
+  transactions: Array<{
+    id: string;
+    type: 'credit' | 'debit';
+    amount: number;
+    balance_after: number;
+    description: string;
+    created_at: string;
+  }>;
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    total_pages: number;
+  };
+}
+
 export function useWallet() {
-  const [wallet, setWallet] = useState<Wallet | null>(null);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [pagination, setPagination] = useState<TransactionPagination | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isToppingUp, setIsToppingUp] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    wallet,
+    transactions,
+    pagination,
+    isLoading,
+    isToppingUp,
+    error,
+    setWallet,
+    setTransactions,
+    setPagination,
+    setLoading,
+    setToppingUp,
+    setError,
+  } = useWalletStore();
 
   const fetchBalance = useCallback(async () => {
     try {
-      const res = await api.get<ApiResponse<Wallet>>('/wallet/balance');
-      setWallet(res.data.data);
-    } catch {
-      setError('Failed to load balance.');
+      const { data } = await api.get<{ data: WalletResponse }>('/wallet/balance');
+      setWallet(data.data);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Failed to load wallet');
     }
-  }, []);
+  }, [setWallet, setError]);
 
   const fetchTransactions = useCallback(async (page = 1) => {
     try {
-      const res = await api.get(`/wallet/transactions?page=${page}&limit=10`);
-      const data = res.data.data;
-      setTransactions(data.transactions);
-      setPagination(data.pagination);
+      const { data } = await api.get<{ data: TransactionResponse }>(
+        `/wallet/transactions?page=${page}&limit=10`,
+      );
+      setTransactions(data.data.transactions);
+      setPagination(data.data.pagination);
     } catch {
-      setError('Failed to load transactions.');
+      // Non-critical, silently fail
     }
-  }, []);
+  }, [setTransactions, setPagination]);
 
-  const loadAll = useCallback(async () => {
-    setIsLoading(true);
+  const topUp = useCallback(async (amount: number, description: string) => {
+    setToppingUp(true);
     setError(null);
-    await Promise.all([fetchBalance(), fetchTransactions(1)]);
-    setIsLoading(false);
-  }, [fetchBalance, fetchTransactions]);
-
-  useEffect(() => {
-    loadAll();
-  }, [loadAll]);
-
-  const topUp = async (amount: number, description: string): Promise<boolean> => {
-    setIsToppingUp(true);
     try {
       await api.post('/wallet/topup', { amount, description });
-      // Refresh balance and transactions after top-up
-      await loadAll();
+      await Promise.all([fetchBalance(), fetchTransactions(1)]);
       return true;
     } catch (err: any) {
-      const msg = err?.response?.data?.message?.[0] || 'Top-up failed. Please try again.';
-      setError(msg);
+      const msg =
+        err?.response?.data?.message?.[0] ||
+        err?.response?.data?.message ||
+        'Top-up failed. Please try again.';
+      setError(typeof msg === 'string' ? msg : msg[0]);
       return false;
     } finally {
-      setIsToppingUp(false);
+      setToppingUp(false);
     }
-  };
+  }, [fetchBalance, fetchTransactions, setToppingUp, setError]);
+
+  useEffect(() => {
+    if (!wallet) {
+      setLoading(true);
+      Promise.all([fetchBalance(), fetchTransactions(1)]).finally(() =>
+        setLoading(false),
+      );
+    }
+  }, []);
 
   return {
     wallet,
@@ -71,8 +98,8 @@ export function useWallet() {
     isLoading,
     isToppingUp,
     error,
+    fetchBalance,
     topUp,
     fetchTransactions,
-    refetch: loadAll,
   };
 }

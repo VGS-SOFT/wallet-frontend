@@ -9,12 +9,16 @@ import api from '@/lib/api';
 import BalanceCard from '@/components/wallet/BalanceCard';
 import TopUpModal from '@/components/wallet/TopUpModal';
 import TransactionList from '@/components/wallet/TransactionList';
+import CallPanel from '@/components/calls/CallPanel';
+
+type DashboardTab = 'wallet' | 'calls';
 
 export default function DashboardPage() {
   const { user, isAuthenticated, _hasHydrated, clearAuth } = useAuthStore();
   const router = useRouter();
   const [avatarError, setAvatarError] = useState(false);
   const [isTopUpOpen, setIsTopUpOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<DashboardTab>('wallet');
 
   const {
     wallet,
@@ -104,43 +108,60 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Wallet Section */}
-        {isWalletLoading ? (
-          <div className="flex justify-center py-10">
-            <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : walletError ? (
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-red-600 text-sm">
-            {walletError}
-          </div>
-        ) : wallet ? (
-          <>
-            {/* Balance Card */}
-            <BalanceCard
-              balance={wallet.balance}
-              currency={wallet.currency}
-              onTopUp={() => setIsTopUpOpen(true)}
-            />
-
-            {/* Transaction History */}
-            <TransactionList
-              transactions={transactions}
-              pagination={pagination}
-              onPageChange={(page) => fetchTransactions(page)}
-            />
-          </>
-        ) : null}
-
-        {/* Coming Soon Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-6 flex flex-col gap-3 opacity-60">
-            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-              <span className="text-blue-600 text-lg">📞</span>
-            </div>
-            <h3 className="font-semibold text-gray-700">Voice Calls</h3>
-            <p className="text-sm text-gray-400">Coming in Phase 3</p>
-          </div>
+        {/* Tab Navigation */}
+        <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+          <button
+            onClick={() => setActiveTab('wallet')}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeTab === 'wallet'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            💰 Wallet
+          </button>
+          <button
+            onClick={() => setActiveTab('calls')}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeTab === 'calls'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            📞 Calls
+          </button>
         </div>
+
+        {/* Wallet Tab */}
+        {activeTab === 'wallet' && (
+          <>
+            {isWalletLoading ? (
+              <div className="flex justify-center py-10">
+                <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : walletError ? (
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-red-600 text-sm">
+                {walletError}
+              </div>
+            ) : wallet ? (
+              <>
+                <BalanceCard
+                  balance={wallet.balance}
+                  currency={wallet.currency}
+                  onTopUp={() => setIsTopUpOpen(true)}
+                />
+                <TransactionList
+                  transactions={transactions}
+                  pagination={pagination}
+                  onPageChange={(page) => fetchTransactions(page)}
+                />
+              </>
+            ) : null}
+          </>
+        )}
+
+        {/* Calls Tab */}
+        {activeTab === 'calls' && <CallPanel />}
       </main>
 
       {/* Top-Up Modal */}
