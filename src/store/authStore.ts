@@ -14,9 +14,17 @@ interface AuthState {
 }
 
 /**
- * Global auth store using Zustand.
- * _hasHydrated: tracks when Zustand has finished reading from localStorage.
- * Until hydration is complete, we show a loading spinner.
+ * Global auth store using Zustand with localStorage persistence.
+ *
+ * Token storage strategy (single source of truth):
+ * - localStorage (via Zustand persist): survives page refresh, readable by JS.
+ * - Cookie (auth_token): readable by axios interceptor on every request.
+ * Both are always kept in sync via setAuth and clearAuth.
+ *
+ * Hydration:
+ * - _hasHydrated starts false. Pages must wait for it before checking auth.
+ * - onRehydrateStorage fires after localStorage is read — sets _hasHydrated true.
+ * - Also re-syncs cookie from persisted token (handles refresh without re-login).
  */
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -27,7 +35,12 @@ export const useAuthStore = create<AuthState>()(
       _hasHydrated: false,
 
       setAuth: (user, token) => {
-        Cookies.set('auth_token', token, { expires: 7, sameSite: 'lax' });
+        // Sync to cookie for axios interceptor
+        Cookies.set('auth_token', token, {
+          expires: 7,
+          sameSite: 'lax',
+          // secure: true  ← enable in production (HTTPS only)
+        });
         set({ user, token, isAuthenticated: true });
       },
 
@@ -40,17 +53,21 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
+      // Only persist these fields to localStorage
       partialize: (state) => ({
         user: state.user,
         token: state.token,
         isAuthenticated: state.isAuthenticated,
       }),
-      // Called automatically by Zustand after localStorage is read
       onRehydrateStorage: () => (state) => {
+        // Fires once after localStorage is read on page load
         state?.setHasHydrated(true);
-        // Sync token from store back into cookie (handles page refresh)
+        // Re-sync cookie from persisted token (page refresh scenario)
         if (state?.token) {
-          Cookies.set('auth_token', state.token, { expires: 7, sameSite: 'lax' });
+          Cookies.set('auth_token', state.token, {
+            expires: 7,
+            sameSite: 'lax',
+          });
         }
       },
     },
