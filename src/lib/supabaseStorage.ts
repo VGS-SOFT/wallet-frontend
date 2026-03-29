@@ -1,17 +1,11 @@
 /**
- * Lightweight Supabase Storage client for browser-side uploads.
- * Used ONLY for uploading call recordings directly from the browser.
- * This bypasses NestJS — audio never touches our backend servers.
+ * This file is intentionally empty.
  *
- * Uses the anon key + RLS policy:
- *   - Users can only upload to their own folder: {user_id}/{filename}
- *   - Users can only read their own files
+ * Recording uploads now use backend-issued pre-signed URLs (PUT via native fetch).
+ * @supabase/supabase-js is NOT used in the frontend.
+ * The anon key is NOT needed and NOT stored in .env.local.
+ *
+ * See: src/hooks/useMediaRecorder.ts — stopAndUpload()
+ *      src/modules/storage/storage.service.ts (backend)
  */
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-export const supabaseStorage = createClient(supabaseUrl, supabaseAnonKey);
-
-export const RECORDINGS_BUCKET = 'call-recordings';
+export {};
