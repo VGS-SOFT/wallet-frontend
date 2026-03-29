@@ -7,15 +7,18 @@ import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/api';
 
 export default function DashboardPage() {
-  const { user, isAuthenticated, isLoading, clearAuth, setLoading } = useAuthStore();
+  const { user, isAuthenticated, _hasHydrated, clearAuth } = useAuthStore();
   const router = useRouter();
 
-  // Protect route — redirect to login if not authenticated
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    // Wait until Zustand has finished reading from localStorage
+    if (!_hasHydrated) return;
+
+    // After hydration: if not authenticated, go to login
+    if (!isAuthenticated) {
       router.replace('/login');
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [_hasHydrated, isAuthenticated, router]);
 
   const handleLogout = async () => {
     try {
@@ -28,14 +31,17 @@ export default function DashboardPage() {
     }
   };
 
-  // Show loading spinner while checking auth state
-  if (isLoading || !user) {
+  // Show spinner while Zustand is hydrating from localStorage
+  if (!_hasHydrated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="w-10 h-10 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
+
+  // After hydration, if no user — show nothing (redirect is already triggered)
+  if (!user) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -88,7 +94,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Feature Cards Grid — more cards added each phase */}
+        {/* Feature Cards Grid */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Wallet Card — Phase 2 */}
           <div className="bg-white rounded-2xl shadow-sm border border-dashed border-gray-200 p-6 flex flex-col gap-3 opacity-60">

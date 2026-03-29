@@ -7,16 +7,16 @@ interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
-  isLoading: boolean;
+  _hasHydrated: boolean;
   setAuth: (user: User, token: string) => void;
   clearAuth: () => void;
-  setLoading: (loading: boolean) => void;
+  setHasHydrated: (state: boolean) => void;
 }
 
 /**
  * Global auth store using Zustand.
- * Persists user data to localStorage so page refresh doesn't log user out.
- * Token is stored in a cookie (accessible to axios interceptor).
+ * _hasHydrated: tracks when Zustand has finished reading from localStorage.
+ * Until hydration is complete, we show a loading spinner.
  */
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -24,25 +24,35 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       isAuthenticated: false,
-      isLoading: true,
+      _hasHydrated: false,
 
       setAuth: (user, token) => {
-        // Store token in cookie for axios interceptor
         Cookies.set('auth_token', token, { expires: 7, sameSite: 'lax' });
-        set({ user, token, isAuthenticated: true, isLoading: false });
+        set({ user, token, isAuthenticated: true });
       },
 
       clearAuth: () => {
         Cookies.remove('auth_token');
-        set({ user: null, token: null, isAuthenticated: false, isLoading: false });
+        set({ user: null, token: null, isAuthenticated: false });
       },
 
-      setLoading: (loading) => set({ isLoading: loading }),
+      setHasHydrated: (state) => set({ _hasHydrated: state }),
     }),
     {
       name: 'auth-storage',
-      // Only persist user and token, not loading state
-      partialize: (state) => ({ user: state.user, token: state.token, isAuthenticated: state.isAuthenticated }),
+      partialize: (state) => ({
+        user: state.user,
+        token: state.token,
+        isAuthenticated: state.isAuthenticated,
+      }),
+      // Called automatically by Zustand after localStorage is read
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+        // Sync token from store back into cookie (handles page refresh)
+        if (state?.token) {
+          Cookies.set('auth_token', state.token, { expires: 7, sameSite: 'lax' });
+        }
+      },
     },
   ),
 );

@@ -5,36 +5,35 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/authStore';
 
 export default function LoginPage() {
-  const { isAuthenticated, isLoading } = useAuthStore();
+  const { isAuthenticated, _hasHydrated } = useAuthStore();
   const router = useRouter();
 
-  // If already logged in, go straight to dashboard
   useEffect(() => {
-    if (!isLoading && isAuthenticated) {
+    // Wait for hydration before checking auth
+    if (!_hasHydrated) return;
+    if (isAuthenticated) {
       router.replace('/dashboard');
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, _hasHydrated, router]);
 
   const handleGoogleLogin = () => {
-    // Redirect to backend Google OAuth endpoint
     window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/auth/google`;
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-blue-100">
       <div className="bg-white rounded-2xl shadow-xl p-10 w-full max-w-md flex flex-col items-center gap-8">
-        {/* Logo / Title */}
+        {/* Logo */}
         <div className="flex flex-col items-center gap-2">
           <div className="w-16 h-16 bg-primary-600 rounded-2xl flex items-center justify-center">
             <span className="text-white text-3xl font-bold">W</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-900">WalletApp</h1>
           <p className="text-gray-500 text-sm text-center">
-            Practice project — Wallet, Calls & more
+            Practice project — Wallet, Calls &amp; more
           </p>
         </div>
 
-        {/* Divider */}
         <div className="w-full border-t border-gray-100" />
 
         {/* Google Login Button */}
@@ -42,7 +41,6 @@ export default function LoginPage() {
           onClick={handleGoogleLogin}
           className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-xl py-3 px-6 text-gray-700 font-medium hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 shadow-sm"
         >
-          {/* Google SVG Icon */}
           <svg width="20" height="20" viewBox="0 0 48 48">
             <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
             <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
