@@ -33,16 +33,16 @@ function mimeToExt(mimeType: string): 'webm' | 'ogg' | 'm4a' {
 
 export function useMediaRecorder(): UseMediaRecorderReturn {
   const [micPermission, setMicPermission] = useState<MicPermission>('idle');
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecording, setIsRecording]     = useState(false);
 
-  const streamRef       = useRef<MediaStream | null>(null);
-  const recorderRef     = useRef<MediaRecorder | null>(null);
-  const chunksRef       = useRef<Blob[]>([]);
-  const signedUrlRef    = useRef<string | null>(null); // self-authenticating PUT URL
-  const storagePathRef  = useRef<string | null>(null); // path to save in DB
-  const mimeTypeRef     = useRef<string>('');
+  const streamRef      = useRef<MediaStream | null>(null);
+  const recorderRef    = useRef<MediaRecorder | null>(null);
+  const chunksRef      = useRef<Blob[]>([]);
+  const signedUrlRef   = useRef<string | null>(null);
+  const storagePathRef = useRef<string | null>(null);
+  const mimeTypeRef    = useRef<string>('');
 
-  // ─── STEP 1: Request mic ─────────────────────────────────────────────────
+  // ─── STEP 1: Request mic ────────────────────────────────────────────────
   const requestMic = useCallback(async (): Promise<boolean> => {
     setMicPermission('requesting');
     try {
@@ -60,8 +60,8 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
   const startRecording = useCallback(async (sessionId: string): Promise<void> => {
     if (!streamRef.current) return;
 
-    chunksRef.current    = [];
-    signedUrlRef.current = null;
+    chunksRef.current      = [];
+    signedUrlRef.current   = null;
     storagePathRef.current = null;
 
     const mimeType = pickMimeType();
@@ -69,16 +69,23 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
     const ext = mimeToExt(mimeType);
 
     try {
-      // Backend: verifies JWT + session ownership + session is ACTIVE
-      // Returns { signedUrl, token, path }
-      // signedUrl already contains the token as a query param —
-      //   it is self-authenticating. No Authorization header needed on PUT.
-      const { data } = await api.post('/calls/recording-token', {
-        session_id: sessionId,
-        extension: ext,
-      });
-      signedUrlRef.current   = data.signedUrl;  // full URL incl. ?token=...
-      storagePathRef.current = data.path;        // e.g. userId/sessionId.webm
+      /**
+       * All backend responses are wrapped by ResponseInterceptor:
+       *   { success: true, data: <payload>, message: '...', timestamp: '...' }
+       *
+       * Axios then wraps the HTTP body in its own .data.
+       * So the full path is: axiosResponse.data.data.signedUrl
+       *                                    ^    ^--- ResponseInterceptor envelope
+       *                                    ^-------- Axios HTTP body
+       */
+      const { data } = await api.post<{
+        data: { signedUrl: string; token: string; path: string };
+      }>('/calls/recording-token', { session_id: sessionId, extension: ext });
+
+      signedUrlRef.current   = data.data.signedUrl; // ← was data.signedUrl before (bug)
+      storagePathRef.current = data.data.path;      // ← was data.path before (bug)
+
+      console.log('[Recording] Token received. Path:', storagePathRef.current);
     } catch (err) {
       console.warn('[Recording] Could not get upload token — call will proceed unrecorded:', err);
     }
@@ -91,7 +98,7 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
     recorder.ondataavailable = (e) => {
       if (e.data?.size > 0) chunksRef.current.push(e.data);
     };
-    recorder.start(1000); // 1-second chunks for low memory pressure
+    recorder.start(1000);
     setIsRecording(true);
   }, []);
 
@@ -102,7 +109,7 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
       if (!recorder || recorder.state === 'inactive') { resolve(null); return; }
 
       recorder.onstop = async () => {
-        // Release mic immediately so browser mic indicator disappears
+        // Release mic — browser mic indicator goes away immediately
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
         setIsRecording(false);
@@ -113,24 +120,23 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
         chunksRef.current = [];
 
         if (!chunks.length || !signedUrl || !storagePath) {
-          console.warn('[Recording] Nothing to upload (no chunks or no signed URL).');
+          console.warn('[Recording] Nothing to upload — chunks:', chunks.length, 'signedUrl:', !!signedUrl);
           resolve(null);
           return;
         }
 
         const mimeType = mimeTypeRef.current || 'audio/webm';
         const blob = new Blob(chunks, { type: mimeType });
-        console.log(`[Recording] Uploading ${(blob.size / 1024).toFixed(1)} KB to Supabase Storage…`);
+        console.log(`[Recording] Uploading ${(blob.size / 1024).toFixed(1)} KB → Supabase Storage…`);
 
         try {
           /**
-           * Supabase Storage signed upload URL (from createSignedUploadUrl):
-           *   - Method: PUT
-           *   - URL: the signedUrl as-is (token is embedded as ?token=... query param)
-           *   - Headers: ONLY Content-Type
-           *   - NO Authorization header — that would override the token and cause 400
+           * Supabase Storage signed upload URL (createSignedUploadUrl):
+           *   PUT <signedUrl>   — token is embedded as query param in the URL
+           *   Content-Type: <mime>
+           *   NO Authorization header — would override the query token → 400
            *
-           * Audio goes directly to Supabase, never touches NestJS.
+           * Audio never touches NestJS.
            */
           const res = await fetch(signedUrl, {
             method: 'PUT',
@@ -139,15 +145,15 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
           });
 
           if (!res.ok) {
-            const body = await res.text();
-            console.error(`[Recording] Upload failed — HTTP ${res.status}:`, body);
+            const errBody = await res.text();
+            console.error(`[Recording] Upload failed — HTTP ${res.status}:`, errBody);
             resolve(null);
           } else {
-            console.log('[Recording] Upload successful. Path:', storagePath);
+            console.log('[Recording] ✅ Upload successful. Path:', storagePath);
             resolve(storagePath);
           }
         } catch (err) {
-          console.error('[Recording] Upload threw an error:', err);
+          console.error('[Recording] Upload error:', err);
           resolve(null);
         }
       };
@@ -156,7 +162,7 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
     });
   }, []);
 
-  // ─── CANCEL (mic denied / user aborted) ────────────────────────────────
+  // ─── CANCEL ─────────────────────────────────────────────────────────
   const cancel = useCallback(() => {
     if (recorderRef.current?.state !== 'inactive') recorderRef.current?.stop();
     streamRef.current?.getTracks().forEach((t) => t.stop());
