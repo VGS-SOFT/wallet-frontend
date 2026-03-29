@@ -8,9 +8,9 @@ export interface CallSession {
   started_at: string;
   ended_at?: string;
   duration_seconds?: number;
-  minutes_billed?: number;
   total_cost?: number;
   failure_reason?: string;
+  recording_url?: string | null;  // signed URL from backend (1hr expiry) or storage path
 }
 
 export interface InitiateCallResponse {
@@ -20,11 +20,7 @@ export interface InitiateCallResponse {
 
 export interface EndCallResponse {
   message: string;
-  session: CallSession & {
-    duration_seconds: number;
-    minutes_billed: number;
-    total_cost: number;
-  };
+  session: CallSession;
 }
 
 export interface ActiveCallResponse {
