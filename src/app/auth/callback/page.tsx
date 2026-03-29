@@ -7,14 +7,15 @@ import api from '@/lib/api';
 import { ApiResponse, User } from '@/types/user.types';
 
 /**
- * This page handles the OAuth callback.
+ * OAuth Callback Page.
  * Backend redirects here with ?token=xxx after Google login.
- * We:
- *  1. Extract the token from URL
- *  2. Fetch user profile from /auth/me
+ *
+ * Flow:
+ *  1. Extract token from URL
+ *  2. Call GET /auth/me to verify token + fetch user
  *  3. Save user + token to Zustand store (+ cookie)
  *  4. Redirect to dashboard
- *  5. Clean the token from URL (security)
+ *  5. On any failure — redirect to /auth/error with reason
  */
 export default function AuthCallbackPage() {
   const router = useRouter();
@@ -30,11 +31,10 @@ export default function AuthCallbackPage() {
     const token = searchParams.get('token');
 
     if (!token) {
-      router.replace('/login');
+      router.replace('/auth/error?reason=no_token');
       return;
     }
 
-    // Fetch user profile using the token
     api
       .get<ApiResponse<User>>('/auth/me', {
         headers: { Authorization: `Bearer ${token}` },
@@ -42,19 +42,18 @@ export default function AuthCallbackPage() {
       .then((res) => {
         const user = res.data.data;
         setAuth(user, token);
-        // Clean token from URL then redirect
         router.replace('/dashboard');
       })
-      .catch(() => {
+      .catch((err) => {
         clearAuth();
-        router.replace('/login');
+        const reason = err?.response?.status === 401 ? 'invalid_token' : 'server_error';
+        router.replace(`/auth/error?reason=${reason}`);
       });
   }, []);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="flex flex-col items-center gap-4">
-        {/* Spinner */}
         <div className="w-10 h-10 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
         <p className="text-gray-500 text-sm">Signing you in...</p>
       </div>
