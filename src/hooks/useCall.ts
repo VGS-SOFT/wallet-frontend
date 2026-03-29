@@ -26,15 +26,11 @@ export function useCall() {
   } = useCallStore();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number | null>(null);
 
-  // ─── Timer: runs while a call is active ──────────────────────────────
+  // ─── Timer ─────────────────────────────────────────────────────────────
   const startTimer = useCallback((startedAt: string) => {
     const start = new Date(startedAt).getTime();
-    startTimeRef.current = start;
-    // Immediately set current elapsed to handle page refresh case
     setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
-
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
@@ -46,10 +42,9 @@ export function useCall() {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    startTimeRef.current = null;
   }, []);
 
-  // ─── On mount: check if user has an active call (page refresh recovery) ───
+  // ─── On mount: restore active call across page refreshes ───────────────
   useEffect(() => {
     const checkActive = async () => {
       try {
@@ -59,15 +54,14 @@ export function useCall() {
           startTimer(data.data.session.started_at);
         }
       } catch {
-        // Silently ignore — not having an active call is not an error
+        // No active call is not an error
       }
     };
     checkActive();
-
     return () => stopTimer();
   }, []);
 
-  // ─── Initiate call ───────────────────────────────────────────────────
+  // ─── Initiate call ──────────────────────────────────────────────────────
   const initiateCall = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -88,7 +82,9 @@ export function useCall() {
     }
   }, [setLoading, setError, setActiveSession, startTimer]);
 
-  // ─── End call ────────────────────────────────────────────────────────
+  // ─── End call ───────────────────────────────────────────────────────────
+  // Only sends session_id. Duration is calculated server-side from started_at.
+  // This eliminates the 1-2s buffer drift that was caused by network latency.
   const endCall = useCallback(async () => {
     if (!activeSession) return null;
     setLoading(true);
@@ -97,7 +93,6 @@ export function useCall() {
     try {
       const { data } = await api.post<{ data: EndCallResponse }>('/calls/end', {
         session_id: activeSession.id,
-        duration_seconds: elapsedSeconds > 0 ? elapsedSeconds : 1,
       });
       reset();
       return data.data.session;
@@ -107,15 +102,14 @@ export function useCall() {
         err?.response?.data?.message ||
         'Failed to end call.';
       setError(typeof msg === 'string' ? msg : msg[0]);
-      // If end fails, restart timer so elapsed continues
       if (activeSession) startTimer(activeSession.started_at);
       return null;
     } finally {
       setLoading(false);
     }
-  }, [activeSession, elapsedSeconds, setLoading, setError, stopTimer, reset, startTimer]);
+  }, [activeSession, setLoading, setError, stopTimer, reset, startTimer]);
 
-  // ─── Fetch history ───────────────────────────────────────────────────
+  // ─── Fetch history ──────────────────────────────────────────────────────
   const fetchCallHistory = useCallback(async (page = 1) => {
     try {
       const { data } = await api.get<{ data: CallHistoryResponse }>(
