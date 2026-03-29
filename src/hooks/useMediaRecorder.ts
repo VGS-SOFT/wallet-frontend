@@ -8,29 +8,12 @@ export type MicPermission = 'idle' | 'requesting' | 'granted' | 'denied';
 interface UseMediaRecorderReturn {
   micPermission: MicPermission;
   isRecording: boolean;
-  /**
-   * Step 1 of the call flow.
-   * Requests mic access. Returns true if granted, false if denied.
-   * Call this BEFORE initiating the billing session.
-   */
   requestMic: () => Promise<boolean>;
-  /**
-   * Step 2. Call after billing session is confirmed open.
-   * Starts MediaRecorder using the already-granted stream.
-   * Fetches a pre-signed upload URL from backend (ownership verified server-side).
-   */
   startRecording: (sessionId: string) => Promise<void>;
-  /**
-   * Step 3. Stops recording, uploads blob directly to Supabase Storage
-   * using the pre-signed URL. Returns the storage path for /calls/end.
-   * Returns null if recording was not started or upload fails.
-   */
   stopAndUpload: () => Promise<string | null>;
-  /** Release mic and reset all state without uploading */
   cancel: () => void;
 }
 
-// Best codec in priority order
 const MIME_PRIORITY = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -55,8 +38,9 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const signedUrlRef = useRef<string | null>(null);   // pre-signed PUT url
-  const storagePathRef = useRef<string | null>(null); // path to send to /calls/end
+  const signedUrlRef = useRef<string | null>(null);
+  const uploadTokenRef = useRef<string | null>(null); // Bearer token for the PUT
+  const storagePathRef = useRef<string | null>(null);
   const mimeTypeRef = useRef<string>('');
 
   // ─── STEP 1: Request mic ────────────────────────────────────────────────
@@ -73,31 +57,34 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
     }
   }, []);
 
-  // ─── STEP 2: Start recording + fetch pre-signed URL ────────────────────
+  // ─── STEP 2: Start recording + fetch pre-signed upload token ──────────────
   const startRecording = useCallback(async (sessionId: string): Promise<void> => {
     if (!streamRef.current) return;
 
     chunksRef.current = [];
     signedUrlRef.current = null;
+    uploadTokenRef.current = null;
     storagePathRef.current = null;
 
     const mimeType = pickMimeType();
     const ext = mimeToExt(mimeType);
     mimeTypeRef.current = mimeType;
 
-    // Fetch pre-signed upload URL from backend
-    // Backend verifies: JWT valid + session belongs to this user + session is active
-    // Storage path is set server-side — client cannot influence it
     try {
+      // Backend verifies JWT + session ownership + active status
+      // Returns { signedUrl, token, path }
+      // signedUrl = the Supabase Storage endpoint to PUT to
+      // token     = Bearer token that authorises this specific upload
+      // path      = storage path to store in DB after upload
       const { data } = await api.post('/calls/recording-token', {
         session_id: sessionId,
         extension: ext,
       });
       signedUrlRef.current = data.signedUrl;
+      uploadTokenRef.current = data.token;
       storagePathRef.current = data.path;
     } catch (err) {
-      // Failed to get upload token — record anyway, upload will be skipped
-      console.warn('Could not get recording token:', err);
+      console.warn('Could not get recording token — call will not be recorded:', err);
     }
 
     const recorder = new MediaRecorder(
@@ -105,12 +92,10 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
       mimeType ? { mimeType } : undefined,
     );
     recorderRef.current = recorder;
-
     recorder.ondataavailable = (e) => {
       if (e.data?.size > 0) chunksRef.current.push(e.data);
     };
-
-    recorder.start(1000); // 1-second chunks
+    recorder.start(1000);
     setIsRecording(true);
   }, []);
 
@@ -118,24 +103,20 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
   const stopAndUpload = useCallback((): Promise<string | null> => {
     return new Promise((resolve) => {
       const recorder = recorderRef.current;
-
-      if (!recorder || recorder.state === 'inactive') {
-        resolve(null);
-        return;
-      }
+      if (!recorder || recorder.state === 'inactive') { resolve(null); return; }
 
       recorder.onstop = async () => {
-        // Release mic immediately — browser mic indicator goes away
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
         setIsRecording(false);
 
         const chunks = chunksRef.current;
         const signedUrl = signedUrlRef.current;
+        const uploadToken = uploadTokenRef.current;
         const storagePath = storagePathRef.current;
         chunksRef.current = [];
 
-        if (!chunks.length || !signedUrl || !storagePath) {
+        if (!chunks.length || !signedUrl || !uploadToken || !storagePath) {
           resolve(null);
           return;
         }
@@ -143,18 +124,29 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
         const mimeType = mimeTypeRef.current || 'audio/webm';
         const blob = new Blob(chunks, { type: mimeType });
 
-        // PUT directly to Supabase Storage using the pre-signed URL
-        // No API key, no auth header — the signed URL IS the credential
-        // Audio never touches NestJS server
         try {
+          /**
+           * Supabase Storage signed upload requires:
+           *   Method:  PUT
+           *   URL:     the signedUrl from createSignedUploadUrl
+           *   Headers: Authorization: Bearer <token>   ← THIS was missing
+           *            Content-Type: <mime>
+           *
+           * The token is single-use and expires in 5 minutes.
+           * Audio never touches NestJS — goes directly to Supabase Storage.
+           */
           const res = await fetch(signedUrl, {
             method: 'PUT',
-            headers: { 'Content-Type': mimeType },
+            headers: {
+              'Authorization': `Bearer ${uploadToken}`,
+              'Content-Type': mimeType,
+            },
             body: blob,
           });
 
           if (!res.ok) {
-            console.error('Recording upload failed:', res.status, await res.text());
+            const errText = await res.text();
+            console.error(`Recording upload failed [${res.status}]:`, errText);
             resolve(null);
           } else {
             resolve(storagePath);
@@ -177,6 +169,7 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
     recorderRef.current = null;
     chunksRef.current = [];
     signedUrlRef.current = null;
+    uploadTokenRef.current = null;
     storagePathRef.current = null;
     setIsRecording(false);
     setMicPermission('idle');
